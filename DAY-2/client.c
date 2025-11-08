@@ -1,31 +1,67 @@
-// client_day2.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define PORT 9000
-#define BUF_SZ 4096
+#define PORT 8080
 
-int main(int argc, char **argv) {
-    if (argc<2) { fprintf(stderr,"Usage: %s <server-ip>\n", argv[0]); return 1; }
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in sa = {0}; sa.sin_family=AF_INET; sa.sin_port = htons(PORT); inet_pton(AF_INET, argv[1], &sa.sin_addr);
-    connect(s, (struct sockaddr*)&sa, sizeof(sa));
-    send(s, "LIST\n", 5, 0);
-    char buf[BUF_SZ];
-    ssize_t n = recv(s, buf, sizeof(buf)-1, 0);
-    if (n<=0) { printf("No response\n"); close(s); return 0; }
-    buf[n]='\0';
-    printf("Files on server:\n%s\n", buf);
-    // Selection demonstration (client chooses a name to GET later)
-    printf("Type filename you'd like to GET on next step (or press Enter to quit): ");
-    char fname[256];
-    if (!fgets(fname, sizeof(fname), stdin)) { close(s); return 0; }
-    if (fname[0]=='\n') { close(s); return 0; }
-    fname[strcspn(fname, "\n")] = 0;
-    printf("You selected: %s\n", fname);
-    close(s);
+int main(){
+    int sock;
+    struct sockaddr_in server_addr;
+    char buffer[1024], filename[256];
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0){
+        perror("Socket creation failed");
+        exit(1);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if(connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+        perror("Connection failed");
+        exit(1);
+    }
+
+    // Check directory status
+    read(sock, buffer, 4);
+    if(strncmp(buffer, "OKAY", 4) != 0){
+        printf("ERROR: Server cannot access share directory.\n");
+        exit(1);
+    }
+
+    printf("\nAvailable files on server:\n");
+    while(1){
+        int n = read(sock, buffer, sizeof(buffer));
+        if(n <= 0) break;
+        buffer[n] = '\0';
+
+        if(strcmp(buffer, "END") == 0) break;
+        printf(" - %s", buffer);
+    }
+
+    printf("\nEnter filename to download: ");
+    fgets(filename, sizeof(filename), stdin);
+    write(sock, filename, strlen(filename));
+
+    read(sock, buffer, 6);
+    if(strncmp(buffer, "NOFILE", 6) == 0){
+        printf("File not found on server.\n");
+        exit(1);
+    }
+
+    FILE *fp = fopen(filename, "wb");
+    int n;
+    while((n = read(sock, buffer, sizeof(buffer))) > 0){
+        fwrite(buffer, 1, n, fp);
+        if(n < sizeof(buffer)) break;
+    }
+    fclose(fp);
+
+    printf("File downloaded successfully.\n");
+    close(sock);
     return 0;
 }
